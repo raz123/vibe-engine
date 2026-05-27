@@ -13,6 +13,7 @@ from .audio.extractor import extract_track_info, extract_playlist_entries, is_pl
 from .audio.analyzer import analyze_track
 from .audio.transition import plan_transition
 from .services.queue import session, planner
+from .services.persistence import save_session, load_session
 from .config import CACHE_DIR
 
 app = FastAPI(title="Vibe Engine API", version="0.1.0")
@@ -24,6 +25,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+save_state = lambda: save_session(session)
+
+restored = load_session(session, planner)
+if restored:
+    print(f"Session restored: {len(session.tracks)} tracks, {len(session.queue)} queued")
+else:
+    print("Fresh session started")
 
 
 @app.get("/health")
@@ -82,6 +91,7 @@ def run_import(url: str, track_id: str, info: dict, title: str, artist: str):
         if len(session.queue) >= 2:
             planner.optimize_queue()
 
+        save_state()
         set_progress(track_id, "done", "Import complete")
 
     except Exception as e:
@@ -216,6 +226,7 @@ async def advance_queue():
     if not tid:
         raise HTTPException(status_code=404, detail="No tracks in queue")
     track = session.tracks.get(tid)
+    save_state()
     return {"track": track}
 
 
@@ -242,6 +253,7 @@ async def get_track(track_id: str):
 async def like_track(track_id: str):
     session.liked_tracks.add(track_id)
     session.skipped_tracks.discard(track_id)
+    save_state()
     return {"status": "liked"}
 
 
@@ -253,6 +265,7 @@ async def skip_track(track_id: str):
     if not tid:
         raise HTTPException(status_code=404, detail="No tracks in queue")
     track = session.tracks.get(tid)
+    save_state()
     return {"track": track}
 
 
@@ -297,6 +310,7 @@ async def get_transition_plan():
 @app.post("/vibe", response_model=VibeChangeRequest)
 async def set_vibe(req: VibeChangeRequest):
     session.set_vibe_mode(req.mode)
+    save_state()
     return req
 
 
@@ -308,12 +322,14 @@ async def get_vibe():
 @app.post("/queue/reorder")
 async def reorder_queue(track_ids: list[str]):
     planner.reorder(track_ids)
+    save_state()
     return {"status": "reordered"}
 
 
 @app.delete("/queue/{track_id}")
 async def remove_from_queue(track_id: str):
     planner.remove_track(track_id)
+    save_state()
     return {"status": "removed"}
 
 
@@ -337,6 +353,9 @@ async def clear_cache():
             for f in d.iterdir():
                 if f.is_file():
                     f.unlink()
+    state_file = CACHE_DIR / "session_state.json"
+    if state_file.exists():
+        state_file.unlink()
     return {"status": "cleared"}
 
 

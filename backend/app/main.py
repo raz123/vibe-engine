@@ -403,6 +403,11 @@ async def clear_cache():
     state_file = CACHE_DIR / "session_state.json"
     if state_file.exists():
         state_file.unlink()
+    session.tracks.clear()
+    session.queue.clear()
+    session.current_index = -1
+    session.liked_tracks.clear()
+    session.skipped_tracks.clear()
     return {"status": "cleared"}
 
 

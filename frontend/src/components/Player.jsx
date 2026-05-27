@@ -142,7 +142,7 @@ export default function Player() {
   const loadTrackInternal = useCallback(async (trackId) => {
     currentTrackIdRef.current = trackId
     const { ctx } = getAudioCtx()
-    if (ctx.state === 'suspended' && !pausedRef.current) await ctx.resume()
+    if (!pausedRef.current) await tryResumeCtx()
 
     const url = `${API_BASE}/track/${trackId}/audio`
     const buffer = await loadAudioBuffer(ctx, url)
@@ -169,7 +169,7 @@ export default function Player() {
       offsetRef.current = 0
       DBG('loadTrackInternal done, started playback')
     }
-  }, [playBuffer, stopSource, setDuration])
+  }, [playBuffer, stopSource, setDuration, tryResumeCtx])
 
   const handleManualCrossfade = useCallback(async () => {
     if (crossfadingRef.current) { DBG('handleManualCrossfade skipped — crossfading'); return }
@@ -178,13 +178,12 @@ export default function Player() {
     const data = await nextTrack()
     if (!data) { DBG('handleManualCrossfade — nextTrack returned null'); return }
     nextTrackDataRef.current = data
-    const { ctx } = getAudioCtx()
-    if (ctx.state === 'suspended') await ctx.resume()
+    await tryResumeCtx()
     const url = `${API_BASE}/track/${data.track.id}/audio`
     const buf = await loadAudioBuffer(ctx, url)
     nextBufferRef.current = buf
     beginCrossfade()
-  }, [current, nextTrack, beginCrossfade])
+  }, [current, nextTrack, beginCrossfade, tryResumeCtx])
 
   useEffect(() => {
     if (!current) return
@@ -196,20 +195,41 @@ export default function Player() {
   }, [current?.track?.id, loadTrackInternal, getTransitionPlan])
 
   // Proper pause/resume via AudioContext
+  const tryResumeCtx = useCallback(async () => {
+    const ctx = getAudioCtx().ctx
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+        DBG('AudioContext resumed')
+        return true
+      } catch (e) {
+        DBG('AudioContext resume failed (autoplay policy):', e)
+        return false
+      }
+    }
+    return true
+  }, [])
+
+  const trySuspendCtx = useCallback(async () => {
+    const ctx = getAudioCtx().ctx
+    if (ctx.state === 'running') {
+      await ctx.suspend()
+      DBG('AudioContext suspended')
+    }
+  }, [])
+
   const togglePlay = useCallback(async () => {
     const ctx = getAudioCtx().ctx
     if (ctx.state === 'running') {
-      DBG('pause — suspending AudioContext')
       pausedRef.current = true
-      await ctx.suspend()
+      await trySuspendCtx()
       setPlaying(false)
     } else {
-      DBG('resume — resuming AudioContext')
       pausedRef.current = false
-      await ctx.resume()
-      setPlaying(true)
+      const ok = await tryResumeCtx()
+      if (ok) setPlaying(true)
     }
-  }, [setPlaying])
+  }, [tryResumeCtx, trySuspendCtx, setPlaying])
 
   const handleSkip = useCallback(async () => {
     if (crossfadingRef.current) { DBG('handleSkip skipped — crossfading'); return }
@@ -223,12 +243,13 @@ export default function Player() {
     const data = await nextTrack()
     if (!data) { DBG('handleAdvance — nextTrack returned null'); return }
     nextTrackDataRef.current = data
+    await tryResumeCtx()
     const { ctx } = getAudioCtx()
     const url = `${API_BASE}/track/${data.track.id}/audio`
     const buf = await loadAudioBuffer(ctx, url)
     nextBufferRef.current = buf
     beginCrossfade()
-  }, [nextTrack, beginCrossfade])
+  }, [nextTrack, beginCrossfade, tryResumeCtx])
   advanceFnRef.current = handleAdvance
 
   const hasNext = currentIndex < queue.length - 1 || queue.length > 1

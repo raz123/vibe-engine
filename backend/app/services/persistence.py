@@ -28,15 +28,25 @@ def serialize_session(session) -> dict:
 
 def deserialize_session(data: dict, session, planner):
     tracks = {}
+    stale = 0
     for tid, tdata in data.get("tracks", {}).items():
         analysis_data = tdata.pop("analysis", None)
         track = Track(**tdata)
         if analysis_data:
             track.analysis = TrackAnalysis(**analysis_data)
+
+        audio_path = Path(track.file_path)
+        if not audio_path.exists():
+            stale += 1
+            continue
+
         tracks[tid] = track
 
+    if stale:
+        print(f"Session load: skipped {stale} tracks with missing audio files")
+
     session.tracks = tracks
-    session.queue = list(data.get("queue", []))
+    session.queue = [tid for tid in data.get("queue", []) if tid in tracks]
     session.current_index = data.get("current_index", -1)
 
     vibe_raw = data.get("vibe_mode", "club")

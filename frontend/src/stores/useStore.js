@@ -137,7 +137,14 @@ export const useStore = create((set, get) => ({
         const { queue, currentIndex } = get()
         if (queue.length > 0 && currentIndex < 0) {
           const nextRes = await get().nextTrack()
-          if (nextRes) get().setPlaying(true)
+          if (nextRes) {
+            try {
+              const ctx = new (window.AudioContext || window.webkitAudioContext)()
+              if (ctx.state === 'suspended') await ctx.resume()
+              ctx.suspend()
+            } catch {}
+            get().setPlaying(true)
+          }
         }
       } else {
         set({ loading: false, error: result.error, importProgress: null })

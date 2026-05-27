@@ -151,5 +151,6 @@ def analyze_track(wav_path: Path, progress_cb=None) -> dict:
         "loudness": -14.0,
     }
 
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(result, indent=2))
     return result

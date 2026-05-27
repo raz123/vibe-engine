@@ -64,32 +64,51 @@ export default function Queue() {
         })}
       </div>
 
-      {libraryOpen && nonQueuedTracks.length > 0 && (
+      {libraryOpen && (
         <div className="border-t border-gray-800 pt-2 mt-2 space-y-1">
           <h4 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider px-1">
-            Library ({nonQueuedTracks.length} not queued)
+            Library ({totalLibrary} imported)
           </h4>
+          {library.length === 0 && (
+            <p className="text-[10px] text-gray-600 px-1">No tracks imported</p>
+          )}
           <div className="space-y-1 max-h-[200px] overflow-y-auto">
-            {nonQueuedTracks.map((entry) => {
+            {library.map((entry) => {
               const t = entry.track
               const a = t.analysis
+              const isInQueue = entry.in_queue
               return (
                 <div key={t.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-800/50 group">
-                  <button
-                    onClick={() => addToQueue(t.id)}
-                    className="text-gray-500 hover:text-vibe-400 transition-colors shrink-0"
-                    title="Add to queue"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                  </button>
+                  {isInQueue ? (
+                    <button
+                      onClick={() => removeFromQueue(t.id)}
+                      className="text-gray-600 hover:text-red-400 transition-colors shrink-0"
+                      title="Remove from queue"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => addToQueue(t.id)}
+                      className="text-gray-500 hover:text-vibe-400 transition-colors shrink-0"
+                      title="Add to queue"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                    </button>
+                  )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-400 truncate">{t.title}</p>
+                    <p className={`text-xs truncate ${isInQueue ? 'text-gray-300' : 'text-gray-500'}`}>{t.title}</p>
                     <p className="text-[10px] text-gray-600 truncate">{t.artist}</p>
                   </div>
                   {a && (
                     <span className="chip bg-gray-800 text-gray-500 text-[10px] shrink-0">{a.key_camelot}</span>
+                  )}
+                  {isInQueue && (
+                    <span className="text-[9px] text-vibe-500/60 shrink-0">queued</span>
                   )}
                   <button
                     onClick={() => removeFromLibrary(t.id)}

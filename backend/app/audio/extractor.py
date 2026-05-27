@@ -8,7 +8,10 @@ import yt_dlp
 from ..config import FFMPEG_PATH, TEMP_DIR, CACHE_DIR, ANALYSIS_CACHE_DIR
 
 AUDIO_CACHE = CACHE_DIR / "audio"
-AUDIO_CACHE.mkdir(exist_ok=True)
+
+
+def _ensure_audio_cache():
+    AUDIO_CACHE.mkdir(parents=True, exist_ok=True)
 
 
 def parse_video_url(url: str):
@@ -68,6 +71,7 @@ def extract_playlist_entries(url: str):
 
 
 def download_audio(url: str, track_id: str, progress_cb=None) -> Path:
+    _ensure_audio_cache()
     output_path = AUDIO_CACHE / f"{track_id}"
     wav_path = output_path.with_suffix(".wav")
 

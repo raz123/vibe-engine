@@ -66,7 +66,7 @@ export default function Player() {
   const {
     queue, currentIndex, isPlaying, transition,
     setPlaying, setCurrentTime, setDuration,
-    nextTrack, advanceQueue, fetchQueue, getTransitionPlan,
+    nextTrack, fetchQueue, getTransitionPlan,
   } = useStore()
 
   const current = queue[currentIndex]
@@ -108,12 +108,12 @@ export default function Player() {
       nextBufferRef.current = null
       timerRef.current = null
 
-      advanceQueue().then(() => {
+      fetchQueue().then(() => {
         getTransitionPlan()
         setPlaying(true)
       })
     }, durationMs + 200)
-  }, [advanceQueue, getTransitionPlan, setPlaying, stopSource])
+  }, [fetchQueue, getTransitionPlan, setPlaying, stopSource])
 
   const beginCrossfade = useCallback(() => {
     if (crossfadingRef.current) return

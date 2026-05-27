@@ -169,6 +169,22 @@ async def get_import_progress(job_id: str):
     return result
 
 
+@app.get("/library")
+async def get_library():
+    items = []
+    for tid, track in session.tracks.items():
+        in_queue = tid in session.queue
+        items.append({"track": track, "in_queue": in_queue})
+    return {"tracks": items, "total": len(items)}
+
+
+@app.delete("/library/{track_id}")
+async def remove_from_library(track_id: str):
+    planner.remove_track(track_id)
+    save_state()
+    return {"status": "removed"}
+
+
 @app.get("/queue", response_model=QueueResponse)
 async def get_queue():
     items = []
@@ -326,11 +342,24 @@ async def reorder_queue(track_ids: list[str]):
     return {"status": "reordered"}
 
 
+@app.post("/queue/add")
+async def add_to_queue(data: dict):
+    track_id = data.get("track_id", "")
+    if not track_id or track_id not in session.tracks:
+        raise HTTPException(status_code=404, detail="Track not found in library")
+    if track_id in session.queue:
+        return {"status": "already_in_queue"}
+    session.queue.append(track_id)
+    save_state()
+    return {"status": "added"}
+
+
 @app.delete("/queue/{track_id}")
 async def remove_from_queue(track_id: str):
-    planner.remove_track(track_id)
+    if track_id in session.queue:
+        session.queue.remove(track_id)
     save_state()
-    return {"status": "removed"}
+    return {"status": "removed_from_queue"}
 
 
 @app.get("/cache/stats")

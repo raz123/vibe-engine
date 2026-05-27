@@ -213,10 +213,57 @@ export const useStore = create((set, get) => ({
     }
   },
 
+  library: [],
+  libraryOpen: false,
+
+  fetchLibrary: async () => {
+    try {
+      const r = await fetch(`${API_BASE}/library`)
+      const data = await r.json()
+      set({ library: data.tracks || [] })
+    } catch (e) {
+      set({ error: e.message })
+    }
+  },
+
+  removeFromQueue: async (trackId) => {
+    try {
+      await fetch(`${API_BASE}/queue/${trackId}`, { method: 'DELETE' })
+      await get().fetchQueue()
+      await get().fetchLibrary()
+    } catch (e) {
+      set({ error: e.message })
+    }
+  },
+
+  addToQueue: async (trackId) => {
+    try {
+      await fetch(`${API_BASE}/queue/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ track_id: trackId }),
+      })
+      await get().fetchQueue()
+      await get().fetchLibrary()
+    } catch (e) {
+      set({ error: e.message })
+    }
+  },
+
+  removeFromLibrary: async (trackId) => {
+    try {
+      await fetch(`${API_BASE}/library/${trackId}`, { method: 'DELETE' })
+      await get().fetchQueue()
+      await get().fetchLibrary()
+    } catch (e) {
+      set({ error: e.message })
+    }
+  },
+
   clearCache: async () => {
     try {
       await fetch(`${API_BASE}/cache/clear`, { method: 'POST' })
-      set({ queue: [], currentIndex: -1 })
+      set({ queue: [], currentIndex: -1, library: [] })
     } catch (e) {
       set({ error: e.message })
     }

@@ -1,6 +1,3 @@
-import uuid
-import json
-import shutil
 import threading
 import time
 from pathlib import Path
@@ -12,7 +9,7 @@ from .models.schemas import (
     ImportRequest, ImportResponse, Track, TrackAnalysis,
     QueueResponse, QueueItem, TransitionPlan, VibeChangeRequest, VibeMode,
 )
-from .audio.extractor import extract_track_id, download_audio, normalize_audio, get_audio_duration
+from .audio.extractor import extract_track_info, extract_playlist_entries, is_playlist_url, download_audio, get_audio_duration
 from .audio.analyzer import analyze_track
 from .audio.transition import plan_transition
 from .services.queue import session, planner
@@ -48,13 +45,10 @@ def run_import(url: str, track_id: str, info: dict, title: str, artist: str):
         set_progress(track_id, "downloading", "Downloading audio from YouTube...")
         wav_path = download_audio(url, track_id, progress_cb=lambda s, m: set_progress(track_id, s, m))
 
-        set_progress(track_id, "normalizing", "Normalizing loudness...")
-        norm_path = normalize_audio(wav_path, progress_cb=lambda s, m: set_progress(track_id, s, m))
-
         set_progress(track_id, "analyzing", "Analyzing track (BPM, key, energy)...")
-        analysis_data = analyze_track(norm_path, progress_cb=lambda s, m: set_progress(track_id, s, m))
+        analysis_data = analyze_track(wav_path, progress_cb=lambda s, m: set_progress(track_id, s, m))
 
-        duration = get_audio_duration(norm_path)
+        duration = get_audio_duration(wav_path)
 
         analysis = TrackAnalysis(
             track_id=track_id,
@@ -78,7 +72,7 @@ def run_import(url: str, track_id: str, info: dict, title: str, artist: str):
             title=analysis.title,
             artist=analysis.artist,
             duration=duration,
-            file_path=str(norm_path),
+            file_path=str(wav_path),
             analysis=analysis,
             stems_available=False,
         )
@@ -96,13 +90,46 @@ def run_import(url: str, track_id: str, info: dict, title: str, artist: str):
 
 @app.post("/import")
 async def import_track(req: ImportRequest):
+    playlist = is_playlist_url(req.url)
+
+    if playlist:
+        try:
+            entries = extract_playlist_entries(req.url)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to extract playlist: {e}")
+
+        if not entries:
+            raise HTTPException(status_code=400, detail="No videos found in playlist")
+
+        job_ids = []
+        for entry in entries:
+            tid = entry["id"]
+            if tid in session.tracks:
+                continue
+            set_progress(tid, "queued", f"Queued: {entry['title']}")
+            thread = threading.Thread(
+                target=run_import,
+                args=(entry["url"], tid, entry, entry["title"], entry["uploader"]),
+                daemon=True,
+            )
+            thread.start()
+            job_ids.append(tid)
+
+        return {
+            "status": "started",
+            "playlist": True,
+            "total": len(entries),
+            "job_ids": job_ids,
+            "title": f"Playlist ({len(entries)} tracks)",
+        }
+
     try:
-        track_id, info = extract_track_id(req.url)
+        track_id, info = extract_track_info(req.url)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to extract info: {e}")
 
     title = info.get("title", "Unknown")
-    artist = info.get("uploader", "Unknown")
+    artist = info.get("uploader", "Unknown") or info.get("channel", "Unknown")
 
     if track_id in session.tracks:
         track = session.tracks[track_id]

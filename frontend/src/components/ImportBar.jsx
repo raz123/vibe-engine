@@ -3,26 +3,26 @@ import { useStore } from '../stores/useStore'
 
 const STAGE_LABELS = {
   starting: 'Starting...',
-  resolving: 'Resolving track...',
-  resolved: 'Track found',
-  downloading: 'Downloading from YouTube...',
-  converting: 'Converting audio...',
-  cached: 'Using cached audio',
-  normalizing: 'Normalizing loudness...',
-  analyzing: 'Analyzing track...',
-  analyzing_bpm: 'Detecting BPM...',
-  analyzing_key: 'Detecting musical key...',
-  analyzing_structure: 'Analyzing structure...',
-  analyzing_energy: 'Computing energy and mood...',
-  done: 'Complete!',
+  resolving: 'Resolving...',
+  resolved: 'Found',
+  queued: 'Queued',
+  downloading: 'Downloading',
+  converting: 'Converting',
+  cached: 'Cached',
+  analyzing: 'Analyzing',
+  analyzing_bpm: 'BPM',
+  analyzing_key: 'Key',
+  analyzing_structure: 'Structure',
+  analyzing_energy: 'Mood',
+  done: 'Done',
   error: 'Failed',
 }
 
 const STAGE_ORDER = [
-  'starting', 'resolving', 'resolved',
+  'starting', 'resolving', 'resolved', 'queued',
   'downloading', 'converting', 'cached',
-  'normalizing', 'analyzing',
-  'analyzing_bpm', 'analyzing_key', 'analyzing_structure', 'analyzing_energy',
+  'analyzing', 'analyzing_bpm', 'analyzing_key',
+  'analyzing_structure', 'analyzing_energy',
   'done', 'error',
 ]
 
@@ -30,6 +30,13 @@ function stageIndex(stage) {
   const idx = STAGE_ORDER.indexOf(stage)
   return idx >= 0 ? idx : -1
 }
+
+const IMPORT_STEPS = [
+  { key: 'resolving', label: 'Find' },
+  { key: 'downloading', label: 'Download' },
+  { key: 'analyzing', label: 'Analyze' },
+  { key: 'done', label: 'Queue' },
+]
 
 export default function ImportBar() {
   const [url, setUrl] = useState('')
@@ -42,6 +49,9 @@ export default function ImportBar() {
   }
 
   const currentStageIdx = importProgress ? stageIndex(importProgress.stage) : -1
+  const currentStep = IMPORT_STEPS.findIndex(
+    (s) => currentStageIdx >= stageIndex(s.key)
+  )
 
   return (
     <div className="w-full space-y-3">
@@ -72,7 +82,7 @@ export default function ImportBar() {
       </form>
 
       {importProgress && (
-        <div className="bg-gray-900 rounded-lg border border-gray-800 p-3 space-y-2">
+        <div className="bg-gray-900 rounded-lg border border-gray-800 p-3 space-y-3">
           <div className="flex items-center gap-2 text-sm">
             {importProgress.stage === 'done' ? (
               <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -92,37 +102,31 @@ export default function ImportBar() {
               {importProgress.message}
             </span>
           </div>
-          <div className="flex gap-1">
-            {STAGE_ORDER.filter((s) => s !== 'done' && s !== 'error' && s !== 'starting').map((stage) => {
-              const idx = stageIndex(stage)
-              const isActive = idx === currentStageIdx
-              const isPast = idx < currentStageIdx
+
+          <div className="flex items-center gap-2">
+            {IMPORT_STEPS.map((step, i) => {
+              const isActive = i === currentStep
+              const isPast = i < currentStep
               return (
-                <div
-                  key={stage}
-                  className={`flex-1 h-1 rounded-full transition-colors ${
-                    isPast ? 'bg-vibe-500' : isActive ? 'bg-vibe-500 animate-pulse' : 'bg-gray-700'
-                  }`}
-                  title={STAGE_LABELS[stage] || stage}
-                />
-              )
-            })}
-          </div>
-          <div className="flex flex-wrap gap-1.5 text-[10px] text-gray-500">
-            {STAGE_ORDER.filter((s) => s !== 'starting').map((stage) => {
-              const idx = stageIndex(stage)
-              const isActive = idx === currentStageIdx
-              const isPast = idx < currentStageIdx
-              if (stage === 'done' || stage === 'error') return null
-              return (
-                <span
-                  key={stage}
-                  className={`px-1.5 py-0.5 rounded ${
-                    isPast ? 'text-vibe-400 bg-vibe-900/30' : isActive ? 'text-white bg-vibe-800/50' : 'text-gray-600'
-                  }`}
-                >
-                  {STAGE_LABELS[stage] || stage}
-                </span>
+                <div key={step.key} className="flex-1 flex items-center gap-2">
+                  <div
+                    className={`flex-1 h-1.5 rounded-full transition-colors ${
+                      isPast ? 'bg-vibe-500' : isActive ? 'bg-vibe-500 animate-pulse' : 'bg-gray-700'
+                    }`}
+                  />
+                  <span
+                    className={`text-[10px] whitespace-nowrap ${
+                      isPast ? 'text-vibe-400' : isActive ? 'text-white' : 'text-gray-600'
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                  {i < IMPORT_STEPS.length - 1 && (
+                    <svg className="w-3 h-3 text-gray-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  )}
+                </div>
               )
             })}
           </div>

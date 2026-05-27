@@ -18,6 +18,37 @@ function EqualizerIcon() {
   )
 }
 
+function EmptyState() {
+  const { queue } = useStore()
+
+  if (queue.length > 0) return null
+
+  return (
+    <div className="card border-dashed border-gray-700 text-center py-8 space-y-3">
+      <div className="text-4xl opacity-30">🎧</div>
+      <h3 className="text-lg font-medium text-gray-300">Welcome to Vibe Engine</h3>
+      <div className="max-w-md mx-auto text-sm text-gray-500 space-y-1.5 text-left">
+        <p className="flex items-start gap-2">
+          <span className="text-vibe-400 font-bold shrink-0 mt-0.5">1</span>
+          <span>Paste a YouTube URL or playlist link above and click <strong className="text-gray-300">Import</strong></span>
+        </p>
+        <p className="flex items-start gap-2">
+          <span className="text-vibe-400 font-bold shrink-0 mt-0.5">2</span>
+          <span>Track gets analyzed (BPM, key, mood) and added to <strong className="text-gray-300">Up Next</strong></span>
+        </p>
+        <p className="flex items-start gap-2">
+          <span className="text-vibe-400 font-bold shrink-0 mt-0.5">3</span>
+          <span>Import a second track — transitions activate automatically between songs</span>
+        </p>
+        <p className="flex items-start gap-2">
+          <span className="text-vibe-400 font-bold shrink-0 mt-0.5">4</span>
+          <span>Adjust <strong className="text-gray-300">Vibe Mode</strong> (Club, Chill, Euphoric&hellip;) to change the energy curve</span>
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const { clearCache } = useStore()
 
@@ -43,6 +74,8 @@ export default function App() {
         <div className="space-y-4 mb-6">
           <ImportBar />
         </div>
+
+        <EmptyState />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-4">

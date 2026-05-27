@@ -1,6 +1,8 @@
 import subprocess
 import json
 import os
+import re
+from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 import yt_dlp
 from ..config import FFMPEG_PATH, TEMP_DIR, CACHE_DIR, ANALYSIS_CACHE_DIR
@@ -9,11 +11,60 @@ AUDIO_CACHE = CACHE_DIR / "audio"
 AUDIO_CACHE.mkdir(exist_ok=True)
 
 
-def extract_track_id(url: str):
-    ydl_opts = {"quiet": True, "no_warnings": True}
+def parse_video_url(url: str):
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    video_id = qs.get("v", [None])[0]
+    return video_id
+
+
+def is_playlist_url(url: str) -> bool:
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    return "list" in qs
+
+
+def extract_track_info(url: str):
+    video_id = parse_video_url(url)
+
+    if video_id:
+        clean_url = f"https://www.youtube.com/watch?v={video_id}"
+    else:
+        clean_url = url
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "no_playlist": True if video_id else False,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(clean_url, download=False)
+
+    if video_id:
+        return video_id, info
+
+    return info.get("id", ""), info
+
+
+def extract_playlist_entries(url: str):
+    ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-        return info.get("id", ""), info
+
+    entries = info.get("entries", [])
+    results = []
+    for entry in entries:
+        vid = entry.get("id")
+        if vid:
+            entry_url = f"https://www.youtube.com/watch?v={vid}"
+            results.append({
+                "id": vid,
+                "url": entry_url,
+                "title": entry.get("title", "Unknown"),
+                "uploader": entry.get("uploader", "Unknown") or entry.get("channel", "Unknown"),
+            })
+    return results
 
 
 def download_audio(url: str, track_id: str, progress_cb=None) -> Path:
@@ -29,7 +80,7 @@ def download_audio(url: str, track_id: str, progress_cb=None) -> Path:
         progress_cb("downloading", "Downloading audio from YouTube...")
 
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": str(output_path) + ".%(ext)s",
         "quiet": True,
         "no_warnings": True,
@@ -58,27 +109,6 @@ def download_audio(url: str, track_id: str, progress_cb=None) -> Path:
             src.unlink(missing_ok=True)
 
     return wav_path
-
-
-def normalize_audio(wav_path: Path, progress_cb=None) -> Path:
-    normalized = wav_path.parent / f"{wav_path.stem}_norm.wav"
-    if normalized.exists():
-        if progress_cb:
-            progress_cb("cached", "Normalized audio already cached")
-        return normalized
-
-    if progress_cb:
-        progress_cb("normalizing", "Normalizing loudness...")
-
-    subprocess.run(
-        [
-            str(FFMPEG_PATH), "-y", "-i", str(wav_path),
-            "-af", "loudnorm=I=-14:TP=-1:LRA=11",
-            "-ar", "44100", "-ac", "2", str(normalized),
-        ],
-        capture_output=True,
-    )
-    return normalized
 
 
 def get_audio_duration(wav_path: Path) -> float:

@@ -47,6 +47,7 @@ export default function Player() {
   const activeRef = useRef(0)
   const crossfadingRef = useRef(false)
   const pausedRef = useRef(false)
+  const ctxSuspendedRef = useRef(false)
   const nextTrackDataRef = useRef(null)
   const currentBufferRef = useRef(null)
   const nextBufferRef = useRef(null)
@@ -139,10 +140,25 @@ export default function Player() {
     scheduleCrossfadeEnd(duration * 1000)
   }, [playBuffer, scheduleCrossfadeEnd])
 
+  const startSource = useCallback((buffer, gain, offset = 0) => {
+    const ctx = getAudioCtx().ctx
+    const src = playBuffer(buffer, gain, offset)
+    src.onended = () => {
+      DBG('source.onended fired')
+      if (!crossfadingRef.current && advanceFnRef.current && !pausedRef.current) {
+        advanceFnRef.current()
+      }
+    }
+    startTimeRef.current = ctx.currentTime
+    offsetRef.current = offset
+    return src
+  }, [playBuffer])
+
   const loadTrackInternal = useCallback(async (trackId) => {
     currentTrackIdRef.current = trackId
     const { ctx } = getAudioCtx()
-    if (!pausedRef.current) await tryResumeCtx()
+    const wasSuspended = ctx.state === 'suspended'
+    ctxSuspendedRef.current = wasSuspended
 
     const url = `${API_BASE}/track/${trackId}/audio`
     const buffer = await loadAudioBuffer(ctx, url)
@@ -152,24 +168,18 @@ export default function Player() {
     setDuration(buffer.duration)
 
     if (currentTrackIdRef.current === trackId) {
-      const now = ctx.currentTime
-      const gain = activeRef.current === 0 ? getAudioCtx().gainA : getAudioCtx().gainB
-      stopSource(activeRef.current === 0 ? sourceARef : sourceBRef, 'loadTrack')
-      const src = playBuffer(buffer, gain)
-      src.onended = () => {
-        DBG('source.onended fired')
-        if (!crossfadingRef.current && advanceFnRef.current && !pausedRef.current) {
-          advanceFnRef.current()
-        }
+      if (!wasSuspended || pausedRef.current) {
+        const gain = activeRef.current === 0 ? getAudioCtx().gainA : getAudioCtx().gainB
+        stopSource(activeRef.current === 0 ? sourceARef : sourceBRef, 'loadTrack')
+        const src = startSource(buffer, gain, 0)
+        if (activeRef.current === 0) sourceARef.current = src
+        else sourceBRef.current = src
+        DBG('loadTrackInternal: started playback')
+      } else {
+        DBG('loadTrackInternal: buffer loaded, waiting for user gesture (ctx suspended)')
       }
-      if (activeRef.current === 0) sourceARef.current = src
-      else sourceBRef.current = src
-
-      startTimeRef.current = now
-      offsetRef.current = 0
-      DBG('loadTrackInternal done, started playback')
     }
-  }, [playBuffer, stopSource, setDuration, tryResumeCtx])
+  }, [startSource, stopSource, setDuration])
 
   const handleManualCrossfade = useCallback(async () => {
     if (crossfadingRef.current) { DBG('handleManualCrossfade skipped — crossfading'); return }
@@ -201,14 +211,32 @@ export default function Player() {
       try {
         await ctx.resume()
         DBG('AudioContext resumed')
+        ctxSuspendedRef.current = false
+        if (currentBufferRef.current && !crossfadingRef.current) {
+          const gain = activeRef.current === 0 ? getAudioCtx().gainA : getAudioCtx().gainB
+          stopSource(activeRef.current === 0 ? sourceARef : sourceBRef, 'resume-restart')
+          const src = playBuffer(currentBufferRef.current, gain, offsetRef.current)
+          src.onended = () => {
+            DBG('source.onended fired')
+            if (!crossfadingRef.current && advanceFnRef.current && !pausedRef.current) {
+              advanceFnRef.current()
+            }
+          }
+          if (activeRef.current === 0) sourceARef.current = src
+          else sourceBRef.current = src
+          startTimeRef.current = ctx.currentTime
+          DBG('restarted source at offset', offsetRef.current)
+        }
         return true
       } catch (e) {
         DBG('AudioContext resume failed (autoplay policy):', e)
+        ctxSuspendedRef.current = true
         return false
       }
     }
+    ctxSuspendedRef.current = false
     return true
-  }, [])
+  }, [playBuffer, stopSource])
 
   const trySuspendCtx = useCallback(async () => {
     const ctx = getAudioCtx().ctx
@@ -227,9 +255,20 @@ export default function Player() {
     } else {
       pausedRef.current = false
       const ok = await tryResumeCtx()
-      if (ok) setPlaying(true)
+      if (ok) {
+        if (ctxSuspendedRef.current && currentBufferRef.current) {
+          const gain = activeRef.current === 0 ? getAudioCtx().gainA : getAudioCtx().gainB
+          stopSource(activeRef.current === 0 ? sourceARef : sourceBRef, 'first-play')
+          const src = startSource(currentBufferRef.current, gain, 0)
+          if (activeRef.current === 0) sourceARef.current = src
+          else sourceBRef.current = src
+          ctxSuspendedRef.current = false
+          DBG('first play: started source')
+        }
+        setPlaying(true)
+      }
     }
-  }, [tryResumeCtx, trySuspendCtx, setPlaying])
+  }, [tryResumeCtx, trySuspendCtx, setPlaying, startSource, stopSource])
 
   const handleSkip = useCallback(async () => {
     if (crossfadingRef.current) { DBG('handleSkip skipped — crossfading'); return }

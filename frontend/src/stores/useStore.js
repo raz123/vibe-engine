@@ -109,7 +109,7 @@ export const useStore = create((set, get) => ({
       const data = await r.json()
 
       if (data.status === 'already_cached') {
-        set({ importProgress: { stage: 'done', message: 'Already cached', track: data.track } })
+        set({ importProgress: null, loading: false })
         await get().fetchQueue()
         return
       }
@@ -119,11 +119,6 @@ export const useStore = create((set, get) => ({
         await get().pollPlaylistImport(data.job_ids || [])
         set({ loading: false, importProgress: null })
         await get().fetchQueue()
-        const { queue, currentIndex } = get()
-        if (queue.length > 0 && currentIndex < 0) {
-          const nextRes = await get().nextTrack()
-          if (nextRes) get().setPlaying(true)
-        }
         return
       }
 
@@ -137,14 +132,7 @@ export const useStore = create((set, get) => ({
         const { queue, currentIndex } = get()
         if (queue.length > 0 && currentIndex < 0) {
           const nextRes = await get().nextTrack()
-          if (nextRes) {
-            try {
-              const ctx = new (window.AudioContext || window.webkitAudioContext)()
-              if (ctx.state === 'suspended') await ctx.resume()
-              ctx.suspend()
-            } catch {}
-            get().setPlaying(true)
-          }
+          if (nextRes) get().setPlaying(true)
         }
       } else {
         set({ loading: false, error: result.error, importProgress: null })

@@ -251,11 +251,12 @@ export default function Player() {
     if (crossfadingRef.current) { DBG('handleManualCrossfade skipped — crossfading'); return }
     if (!current) { DBG('handleManualCrossfade skipped — no current'); return }
     DBG('handleManualCrossfade start')
-    const data = await nextTrack()
-    if (!data) { DBG('handleManualCrossfade — nextTrack returned null'); return }
-    nextTrackDataRef.current = data
+    const result = await nextTrack()
+    if (!result) { DBG('handleManualCrossfade — nextTrack returned null'); return }
+    nextTrackDataRef.current = result
     await tryResumeCtx()
-    const url = `${API_BASE}/track/${data.track.id}/audio`
+    const { ctx } = getAudioCtx()
+    const url = `${API_BASE}/track/${result.track.id}/audio`
     const buf = await loadAudioBuffer(ctx, url)
     nextBufferRef.current = buf
     beginCrossfade()
@@ -279,12 +280,12 @@ export default function Player() {
     if (crossfadingRef.current) { DBG('handleAdvance skipped — crossfading'); return }
     if (pausedRef.current) { DBG('handleAdvance skipped — paused'); return }
     DBG('handleAdvance start (track ended)')
-    const data = await nextTrack()
-    if (!data) { DBG('handleAdvance — nextTrack returned null'); return }
-    nextTrackDataRef.current = data
+    const result = await nextTrack()
+    if (!result) { DBG('handleAdvance — nextTrack returned null'); return }
+    nextTrackDataRef.current = result
     await tryResumeCtx()
     const { ctx } = getAudioCtx()
-    const url = `${API_BASE}/track/${data.track.id}/audio`
+    const url = `${API_BASE}/track/${result.track.id}/audio`
     const buf = await loadAudioBuffer(ctx, url)
     nextBufferRef.current = buf
     beginCrossfade()

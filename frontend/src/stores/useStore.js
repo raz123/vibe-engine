@@ -149,7 +149,7 @@ export const useStore = create((set, get) => ({
       const data = await r.json()
       set({ transition: data.transition })
       await get().fetchQueue()
-      return data.track
+      return { track: data.track, transition: data.transition }
     } catch (e) {
       set({ error: e.message })
       return null

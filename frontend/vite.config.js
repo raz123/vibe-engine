@@ -7,4 +7,14 @@ export default defineConfig({
     port: 5173,
   },
   base: './',
+  build: {
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'zustand'],
+        },
+      },
+    },
+  },
 })

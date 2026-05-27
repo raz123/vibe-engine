@@ -107,18 +107,32 @@ def classify_mood(bpm, energy, brightness):
     return moods
 
 
-def analyze_track(wav_path: Path) -> dict:
+def analyze_track(wav_path: Path, progress_cb=None) -> dict:
     cache_key = wav_path.stem.replace("_norm", "")
     cache_file = ANALYSIS_CACHE_DIR / f"{cache_key}.json"
 
     if cache_file.exists():
         return json.loads(cache_file.read_text())
 
+    if progress_cb:
+        progress_cb("analyzing", "Loading audio for analysis...")
+
     y, sr = librosa.load(str(wav_path), sr=22050, mono=True, duration=300)
 
+    if progress_cb:
+        progress_cb("analyzing_bpm", "Detecting BPM...")
     bpm, bpm_confidence = detect_bpm(y, sr)
+
+    if progress_cb:
+        progress_cb("analyzing_key", "Detecting musical key...")
     key, camelot, key_confidence = detect_key(y, sr)
+
+    if progress_cb:
+        progress_cb("analyzing_structure", "Analyzing song structure...")
     structure = detect_structure(y, sr)
+
+    if progress_cb:
+        progress_cb("analyzing_energy", "Computing energy and mood...")
     energy_data = compute_energy(y, sr)
     moods = classify_mood(bpm, energy_data["energy"], energy_data["brightness"])
 

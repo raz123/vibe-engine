@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 const API_BASE = ''
+const POLL_INTERVAL = 500
 
 export const VIBE_MODES = [
   'club', 'chill', 'focus', 'late_night',
@@ -18,6 +19,7 @@ export const useStore = create((set, get) => ({
   error: null,
   transition: null,
   history: [],
+  importProgress: null,
 
   fetchQueue: async () => {
     try {
@@ -30,7 +32,7 @@ export const useStore = create((set, get) => ({
   },
 
   importTrack: async (url) => {
-    set({ loading: true, error: null })
+    set({ loading: true, error: null, importProgress: { stage: 'starting', message: 'Starting import...' } })
     try {
       const r = await fetch(`${API_BASE}/import`, {
         method: 'POST',
@@ -38,11 +40,39 @@ export const useStore = create((set, get) => ({
         body: JSON.stringify({ url }),
       })
       if (!r.ok) throw new Error((await r.json()).detail || 'Import failed')
-      await get().fetchQueue()
+      const data = await r.json()
+
+      if (data.status === 'already_cached') {
+        set({ importProgress: { stage: 'done', message: 'Already cached', track: data.track } })
+        await get().fetchQueue()
+        return
+      }
+
+      const jobId = data.job_id
+      set({ importProgress: { stage: 'resolving', message: `Resolving: ${data.title || url}` } })
+
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch(`${API_BASE}/import/progress/${jobId}`)
+          const p = await pr.json()
+
+          if (p.stage === 'done') {
+            clearInterval(poll)
+            set({ loading: false, importProgress: null })
+            await get().fetchQueue()
+          } else if (p.stage === 'error') {
+            clearInterval(poll)
+            set({ loading: false, error: p.message, importProgress: null })
+          } else {
+            set({ importProgress: { stage: p.stage, message: p.message } })
+          }
+        } catch (e) {
+          clearInterval(poll)
+          set({ loading: false, error: e.message, importProgress: null })
+        }
+      }, POLL_INTERVAL)
     } catch (e) {
-      set({ error: e.message })
-    } finally {
-      set({ loading: false })
+      set({ loading: false, error: e.message, importProgress: null })
     }
   },
 

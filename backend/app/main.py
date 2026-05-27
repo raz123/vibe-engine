@@ -1,6 +1,8 @@
 import uuid
 import json
 import shutil
+import threading
+import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,56 +34,102 @@ async def health():
     return {"status": "ok", "version": "0.1.0"}
 
 
-@app.post("/import", response_model=ImportResponse)
+import_progress_store = {}
+import_progress_lock = threading.Lock()
+
+
+def set_progress(track_id: str, stage: str, message: str):
+    with import_progress_lock:
+        import_progress_store[track_id] = {"stage": stage, "message": message, "updated_at": time.time()}
+
+
+def run_import(url: str, track_id: str, info: dict, title: str, artist: str):
+    try:
+        set_progress(track_id, "downloading", "Downloading audio from YouTube...")
+        wav_path = download_audio(url, track_id, progress_cb=lambda s, m: set_progress(track_id, s, m))
+
+        set_progress(track_id, "normalizing", "Normalizing loudness...")
+        norm_path = normalize_audio(wav_path, progress_cb=lambda s, m: set_progress(track_id, s, m))
+
+        set_progress(track_id, "analyzing", "Analyzing track (BPM, key, energy)...")
+        analysis_data = analyze_track(norm_path, progress_cb=lambda s, m: set_progress(track_id, s, m))
+
+        duration = get_audio_duration(norm_path)
+
+        analysis = TrackAnalysis(
+            track_id=track_id,
+            title=title,
+            artist=artist,
+            duration=duration,
+            bpm=analysis_data["bpm"],
+            bpm_confidence=analysis_data["bpm_confidence"],
+            key=analysis_data["key"],
+            key_camelot=analysis_data["key_camelot"],
+            energy=analysis_data["energy"],
+            danceability=analysis_data["danceability"],
+            mood=analysis_data["mood"],
+            structure=analysis_data["structure"],
+            loudness=analysis_data["loudness"],
+        )
+
+        track = Track(
+            id=track_id,
+            url=url,
+            title=analysis.title,
+            artist=analysis.artist,
+            duration=duration,
+            file_path=str(norm_path),
+            analysis=analysis,
+            stems_available=False,
+        )
+
+        planner.add_track(track)
+
+        if len(session.queue) >= 2:
+            planner.optimize_queue()
+
+        set_progress(track_id, "done", "Import complete")
+
+    except Exception as e:
+        set_progress(track_id, "error", f"Import failed: {e}")
+
+
+@app.post("/import")
 async def import_track(req: ImportRequest):
     try:
         track_id, info = extract_track_id(req.url)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to extract info: {e}")
 
+    title = info.get("title", "Unknown")
+    artist = info.get("uploader", "Unknown")
+
     if track_id in session.tracks:
         track = session.tracks[track_id]
-        return ImportResponse(track=track, status="already_cached")
+        return {"track": track, "status": "already_cached", "job_id": track_id}
 
-    wav_path = download_audio(req.url, track_id)
-    norm_path = normalize_audio(wav_path)
+    set_progress(track_id, "resolving", "Resolving track info...")
+    set_progress(track_id, "resolved", f"Found: {title}")
 
-    duration = get_audio_duration(norm_path)
+    thread = threading.Thread(target=run_import, args=(req.url, track_id, info, title, artist), daemon=True)
+    thread.start()
 
-    analysis_data = analyze_track(norm_path)
-    analysis = TrackAnalysis(
-        track_id=track_id,
-        title=info.get("title", "Unknown"),
-        artist=info.get("uploader", "Unknown"),
-        duration=duration,
-        bpm=analysis_data["bpm"],
-        bpm_confidence=analysis_data["bpm_confidence"],
-        key=analysis_data["key"],
-        key_camelot=analysis_data["key_camelot"],
-        energy=analysis_data["energy"],
-        danceability=analysis_data["danceability"],
-        mood=analysis_data["mood"],
-        structure=analysis_data["structure"],
-        loudness=analysis_data["loudness"],
-    )
+    return {"status": "started", "job_id": track_id, "title": title, "artist": artist}
 
-    track = Track(
-        id=track_id,
-        url=req.url,
-        title=analysis.title,
-        artist=analysis.artist,
-        duration=duration,
-        file_path=str(norm_path),
-        analysis=analysis,
-        stems_available=False,
-    )
 
-    planner.add_track(track)
-
-    if len(session.queue) >= 2:
-        planner.optimize_queue()
-
-    return ImportResponse(track=track, status="imported")
+@app.get("/import/progress/{job_id}")
+async def get_import_progress(job_id: str):
+    with import_progress_lock:
+        progress = import_progress_store.get(job_id)
+    if not progress:
+        if job_id in session.tracks:
+            return {"stage": "done", "message": "Import complete", "track_id": job_id}
+        return {"stage": "unknown", "message": "No import job found with that ID"}
+    result = dict(progress)
+    if progress["stage"] == "done" and job_id in session.tracks:
+        track = session.tracks[job_id]
+        result["track"] = track
+    return result
 
 
 @app.get("/queue", response_model=QueueResponse)

@@ -9,19 +9,24 @@ AUDIO_CACHE = CACHE_DIR / "audio"
 AUDIO_CACHE.mkdir(exist_ok=True)
 
 
-def extract_track_id(url: str) -> str:
+def extract_track_id(url: str):
     ydl_opts = {"quiet": True, "no_warnings": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         return info.get("id", ""), info
 
 
-def download_audio(url: str, track_id: str) -> Path:
+def download_audio(url: str, track_id: str, progress_cb=None) -> Path:
     output_path = AUDIO_CACHE / f"{track_id}"
     wav_path = output_path.with_suffix(".wav")
 
     if wav_path.exists():
+        if progress_cb:
+            progress_cb("cached", "Audio already cached")
         return wav_path
+
+    if progress_cb:
+        progress_cb("downloading", "Downloading audio from YouTube...")
 
     ydl_opts = {
         "format": "bestaudio/best",
@@ -44,6 +49,8 @@ def download_audio(url: str, track_id: str) -> Path:
         existing = list(AUDIO_CACHE.glob(f"{track_id}.*"))
         if existing:
             src = existing[0]
+            if progress_cb:
+                progress_cb("converting", "Converting audio to WAV...")
             subprocess.run(
                 [str(FFMPEG_PATH), "-y", "-i", str(src), "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", str(wav_path)],
                 capture_output=True,
@@ -53,10 +60,15 @@ def download_audio(url: str, track_id: str) -> Path:
     return wav_path
 
 
-def normalize_audio(wav_path: Path) -> Path:
+def normalize_audio(wav_path: Path, progress_cb=None) -> Path:
     normalized = wav_path.parent / f"{wav_path.stem}_norm.wav"
     if normalized.exists():
+        if progress_cb:
+            progress_cb("cached", "Normalized audio already cached")
         return normalized
+
+    if progress_cb:
+        progress_cb("normalizing", "Normalizing loudness...")
 
     subprocess.run(
         [

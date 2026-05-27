@@ -16,6 +16,10 @@ from .services.queue import session, planner
 from .services.persistence import save_session, load_session
 from .config import CACHE_DIR
 
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("vibe")
+
 app = FastAPI(title="Vibe Engine API", version="0.1.0")
 
 app.add_middleware(
@@ -26,13 +30,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    log.info("%s %s", request.method, request.url.path)
+    response = await call_next(request)
+    if response.status_code >= 400:
+        log.warning("%s %s -> %s", request.method, request.url.path, response.status_code)
+    return response
+
 save_state = lambda: save_session(session)
 
 restored = load_session(session, planner)
 if restored:
-    print(f"Session restored: {len(session.tracks)} tracks, {len(session.queue)} queued")
+    log.info("Session restored: %d tracks, %d queued", len(session.tracks), len(session.queue))
 else:
-    print("Fresh session started")
+    log.info("Fresh session started")
 
 
 @app.get("/health")
@@ -50,6 +63,7 @@ def set_progress(track_id: str, stage: str, message: str):
 
 
 def run_import(url: str, track_id: str, info: dict, title: str, artist: str):
+    log.info("Import start: id=%s title=%s", track_id, title)
     try:
         set_progress(track_id, "downloading", "Downloading audio from YouTube...")
         wav_path = download_audio(url, track_id, progress_cb=lambda s, m: set_progress(track_id, s, m))
@@ -93,8 +107,10 @@ def run_import(url: str, track_id: str, info: dict, title: str, artist: str):
 
         save_state()
         set_progress(track_id, "done", "Import complete")
+        log.info("Import done: id=%s queue=%d tracks", track_id, len(session.queue))
 
     except Exception as e:
+        log.error("Import failed: id=%s error=%s", track_id, e)
         set_progress(track_id, "error", f"Import failed: {e}")
 
 
@@ -233,6 +249,8 @@ async def next_track():
                 timestamp_out=trans["timestamp_out"],
             )
 
+    log.info("queue/next: index now=%d track=%s transition=%s",
+             session.current_index, tid, transition.transition_type)
     return {"track": track, "transition": transition}
 
 

@@ -5,20 +5,18 @@ export default function Queue() {
 
   const queuedIds = new Set(queue.map((item) => item.track.id))
   const nonQueuedTracks = library.filter((item) => !item.in_queue)
+  const totalLibrary = library.length
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1">
         <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Up Next</h3>
-        {library.length > 0 && (
+        {totalLibrary > 0 && (
           <button
-            onClick={() => {
-              useStore.setState({ libraryOpen: !libraryOpen })
-              if (!library.length) fetchLibrary()
-            }}
+            onClick={() => useStore.setState({ libraryOpen: !libraryOpen })}
             className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
           >
-            Library ({library.length})
+            Library ({totalLibrary})
           </button>
         )}
       </div>

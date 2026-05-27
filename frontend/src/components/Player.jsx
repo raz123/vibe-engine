@@ -3,6 +3,7 @@ import { useStore } from '../stores/useStore'
 import Visualizer from './Visualizer'
 
 const API_BASE = ''
+const DBG = (...args) => console.log('[Player]', ...args)
 
 function formatTime(s) {
   if (!s || isNaN(s)) return '0:00'
@@ -15,22 +16,14 @@ function setupAudioGraph(ctx) {
   const master = ctx.createGain()
   master.gain.value = 1
   master.connect(ctx.destination)
-
-  const gainA = ctx.createGain()
-  gainA.gain.value = 1
-  gainA.connect(master)
-
-  const gainB = ctx.createGain()
-  gainB.gain.value = 0
-  gainB.connect(master)
-
+  const gainA = ctx.createGain(); gainA.gain.value = 1; gainA.connect(master)
+  const gainB = ctx.createGain(); gainB.gain.value = 0; gainB.connect(master)
+  DBG('audio graph created')
   return { master, gainA, gainB }
 }
 
 let ctxSingleton = null
 let graphSingleton = null
-let sourceCount = 0
-
 function getAudioCtx() {
   if (!ctxSingleton) {
     ctxSingleton = new (window.AudioContext || window.webkitAudioContext)()
@@ -40,9 +33,8 @@ function getAudioCtx() {
 }
 
 function loadAudioBuffer(ctx, url) {
-  return fetch(url)
-    .then((r) => r.arrayBuffer())
-    .then((buf) => ctx.decodeAudioData(buf))
+  DBG('loading buffer:', url.slice(-30))
+  return fetch(url).then((r) => r.arrayBuffer()).then((buf) => ctx.decodeAudioData(buf))
 }
 
 export default function Player() {
@@ -54,6 +46,7 @@ export default function Player() {
   const sourceBRef = useRef(null)
   const activeRef = useRef(0)
   const crossfadingRef = useRef(false)
+  const pausedRef = useRef(false)
   const nextTrackDataRef = useRef(null)
   const currentBufferRef = useRef(null)
   const nextBufferRef = useRef(null)
@@ -71,11 +64,10 @@ export default function Player() {
 
   const current = queue[currentIndex]
 
-  useEffect(() => {
-    fetchQueue()
-  }, [])
+  useEffect(() => { fetchQueue() }, [])
 
-  const stopSource = useCallback((srcRef) => {
+  const stopSource = useCallback((srcRef, label = '') => {
+    if (srcRef.current) DBG('stopSource', label)
     try { srcRef.current?.stop() } catch {}
     try { srcRef.current?.disconnect() } catch {}
     srcRef.current = null
@@ -87,56 +79,58 @@ export default function Player() {
     src.buffer = buffer
     src.connect(gainNode)
     src.start(when, offset)
+    DBG('playBuffer offset=', offset, 'when=', when)
     return src
   }, [])
 
   const scheduleCrossfadeEnd = useCallback((durationMs) => {
     if (timerRef.current) clearTimeout(timerRef.current)
+    DBG('scheduleCrossfadeEnd in', durationMs, 'ms')
     timerRef.current = setTimeout(() => {
-      stopSource(activeRef.current === 0 ? sourceARef : sourceBRef)
+      stopSource(activeRef.current === 0 ? sourceARef : sourceBRef, 'old-active')
       const { gainA, gainB } = getAudioCtx()
       gainA.gain.value = 1
       gainB.gain.value = 0
-
       activeRef.current = activeRef.current === 0 ? 1 : 0
       crossfadingRef.current = false
       setCrossfading(false)
       setNextTrackInfo(null)
       offsetRef.current = 0
-      startTimeRef.current = 0
+      startTimeRef.current = getAudioCtx().ctx.currentTime
       nextTrackDataRef.current = null
       nextBufferRef.current = null
       timerRef.current = null
+      DBG('crossfade complete, activeRef=', activeRef.current)
 
       fetchQueue().then(() => {
         getTransitionPlan()
-        setPlaying(true)
+        if (!pausedRef.current) setPlaying(true)
       })
     }, durationMs + 200)
   }, [fetchQueue, getTransitionPlan, setPlaying, stopSource])
 
   const beginCrossfade = useCallback(() => {
-    if (crossfadingRef.current) return
+    if (crossfadingRef.current) { DBG('beginCrossfade skipped — already crossfading'); return }
     const nextData = nextTrackDataRef.current
-    if (!nextData) return
+    if (!nextData) { DBG('beginCrossfade skipped — no nextData'); return }
 
     const duration = nextData.transition?.crossfade_duration || 4
+    const entryOffset = nextData.transition?.timestamp_in || 0
     const now = getAudioCtx().ctx.currentTime
-
     const nextBuf = nextBufferRef.current
-    if (!nextBuf) return
+    if (!nextBuf) { DBG('beginCrossfade skipped — no nextBuf'); return }
 
     crossfadingRef.current = true
     setCrossfading(true)
     setNextTrackInfo(nextData.track)
+    DBG('beginCrossfade type=', nextData.transition?.transition_type, 'duration=', duration, 'entry=', entryOffset)
 
     const idleGain = activeRef.current === 0 ? getAudioCtx().gainB : getAudioCtx().gainA
     const activeGain = activeRef.current === 0 ? getAudioCtx().gainA : getAudioCtx().gainB
     const idleSrcRef = activeRef.current === 0 ? sourceBRef : sourceARef
 
     idleGain.gain.setValueAtTime(0, now)
-
-    const src = playBuffer(nextBuf, idleGain, 0, now)
+    const src = playBuffer(nextBuf, idleGain, entryOffset, now)
     idleSrcRef.current = src
 
     idleGain.gain.linearRampToValueAtTime(1, now + duration)
@@ -148,10 +142,11 @@ export default function Player() {
   const loadTrackInternal = useCallback(async (trackId) => {
     currentTrackIdRef.current = trackId
     const { ctx } = getAudioCtx()
-    if (ctx.state === 'suspended') await ctx.resume()
+    if (ctx.state === 'suspended' && !pausedRef.current) await ctx.resume()
 
     const url = `${API_BASE}/track/${trackId}/audio`
     const buffer = await loadAudioBuffer(ctx, url)
+    if (currentTrackIdRef.current !== trackId) { DBG('loadTrackInternal stale, abort'); return }
     currentBufferRef.current = buffer
     setCurrentBuffer(buffer)
     setDuration(buffer.duration)
@@ -159,11 +154,11 @@ export default function Player() {
     if (currentTrackIdRef.current === trackId) {
       const now = ctx.currentTime
       const gain = activeRef.current === 0 ? getAudioCtx().gainA : getAudioCtx().gainB
-      stopSource(activeRef.current === 0 ? sourceARef : sourceBRef)
-
+      stopSource(activeRef.current === 0 ? sourceARef : sourceBRef, 'loadTrack')
       const src = playBuffer(buffer, gain)
       src.onended = () => {
-        if (!crossfadingRef.current && advanceFnRef.current) {
+        DBG('source.onended fired')
+        if (!crossfadingRef.current && advanceFnRef.current && !pausedRef.current) {
           advanceFnRef.current()
         }
       }
@@ -172,67 +167,73 @@ export default function Player() {
 
       startTimeRef.current = now
       offsetRef.current = 0
+      DBG('loadTrackInternal done, started playback')
     }
   }, [playBuffer, stopSource, setDuration])
 
   const handleManualCrossfade = useCallback(async () => {
-    if (crossfadingRef.current) return
-    if (!current) return
-
+    if (crossfadingRef.current) { DBG('handleManualCrossfade skipped — crossfading'); return }
+    if (!current) { DBG('handleManualCrossfade skipped — no current'); return }
+    DBG('handleManualCrossfade start')
     const data = await nextTrack()
-    if (!data) return
+    if (!data) { DBG('handleManualCrossfade — nextTrack returned null'); return }
     nextTrackDataRef.current = data
-
     const { ctx } = getAudioCtx()
+    if (ctx.state === 'suspended') await ctx.resume()
     const url = `${API_BASE}/track/${data.track.id}/audio`
     const buf = await loadAudioBuffer(ctx, url)
     nextBufferRef.current = buf
-
     beginCrossfade()
   }, [current, nextTrack, beginCrossfade])
 
   useEffect(() => {
     if (!current) return
     if (currentTrackIdRef.current !== current.track.id && !crossfadingRef.current) {
+      DBG('track changed to:', current.track.id)
       getTransitionPlan()
       loadTrackInternal(current.track.id)
     }
   }, [current?.track?.id, loadTrackInternal, getTransitionPlan])
 
-  const togglePlay = useCallback(() => {
-    setPlaying((p) => !p)
+  // Proper pause/resume via AudioContext
+  const togglePlay = useCallback(async () => {
+    const ctx = getAudioCtx().ctx
+    if (ctx.state === 'running') {
+      DBG('pause — suspending AudioContext')
+      pausedRef.current = true
+      await ctx.suspend()
+      setPlaying(false)
+    } else {
+      DBG('resume — resuming AudioContext')
+      pausedRef.current = false
+      await ctx.resume()
+      setPlaying(true)
+    }
   }, [setPlaying])
 
-  useEffect(() => {
-    const { ctx } = getAudioCtx()
-    if (isPlaying) {
-      if (ctx.state === 'suspended') ctx.resume()
-    }
-  }, [isPlaying])
-
   const handleSkip = useCallback(async () => {
-    if (crossfadingRef.current) return
+    if (crossfadingRef.current) { DBG('handleSkip skipped — crossfading'); return }
     await handleManualCrossfade()
   }, [handleManualCrossfade])
 
   const handleAdvance = useCallback(async () => {
-    if (crossfadingRef.current) return
+    if (crossfadingRef.current) { DBG('handleAdvance skipped — crossfading'); return }
+    if (pausedRef.current) { DBG('handleAdvance skipped — paused'); return }
+    DBG('handleAdvance start (track ended)')
     const data = await nextTrack()
-    if (!data) return
+    if (!data) { DBG('handleAdvance — nextTrack returned null'); return }
     nextTrackDataRef.current = data
-
     const { ctx } = getAudioCtx()
     const url = `${API_BASE}/track/${data.track.id}/audio`
     const buf = await loadAudioBuffer(ctx, url)
     nextBufferRef.current = buf
-
     beginCrossfade()
   }, [nextTrack, beginCrossfade])
   advanceFnRef.current = handleAdvance
 
   const hasNext = currentIndex < queue.length - 1 || queue.length > 1
 
-  // Use requestAnimationFrame to update current time
+  // RAF time tracking — works even when suspended (time freezes)
   useEffect(() => {
     if (!isPlaying || !currentBuffer) return
     let raf
@@ -253,9 +254,8 @@ export default function Player() {
     if (isNaN(t)) return
     offsetRef.current = t
     startTimeRef.current = getAudioCtx().ctx.currentTime
-
     if (crossfadingRef.current) return
-    stopSource(activeRef.current === 0 ? sourceARef : sourceBRef)
+    stopSource(activeRef.current === 0 ? sourceARef : sourceBRef, 'seek')
     if (currentBufferRef.current) {
       const gain = activeRef.current === 0 ? getAudioCtx().gainA : getAudioCtx().gainB
       const src = playBuffer(currentBufferRef.current, gain, t)
@@ -289,7 +289,9 @@ export default function Player() {
       <div className="text-center space-y-1 min-h-[3rem]">
         {crossfading && nextTrackInfo ? (
           <>
-            <p className="text-xs text-vibe-400 font-medium animate-pulse">Crossfading to next track...</p>
+            <p className="text-xs text-vibe-400 font-medium animate-pulse">
+              Crossfading: {transition?.transition_type || 'crossfade'}
+            </p>
             <h2 className="text-xl font-semibold truncate text-vibe-300">{nextTrackInfo.title}</h2>
             <p className="text-sm text-gray-500 truncate">{nextTrackInfo.artist}</p>
           </>
@@ -315,7 +317,8 @@ export default function Player() {
       {transition && !crossfading && !nextTrackInfo && (
         <div className="text-center text-xs text-gray-500">
           Up next: <span className="text-vibe-400 font-medium">{transition.transition_type}</span>
-          {' · '}{transition.crossfade_duration}s crossfade
+          {' \u00B7 '}{transition.crossfade_duration}s crossfade
+          {transition.timestamp_in > 0 && ' \u00B7 entry at ' + formatTime(transition.timestamp_in)}
         </div>
       )}
 
@@ -327,35 +330,27 @@ export default function Player() {
           max={duration || 0}
           value={seekTime}
           onChange={handleSeek}
-          className="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-vibe-500 [&::-webkit-slider-thumb]:rounded-full"
+          className="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
         />
         <span className="text-xs text-gray-500 w-10">{formatTime(duration)}</span>
       </div>
 
       <div className="flex items-center justify-center gap-4">
         <button onClick={handleSkip} disabled={!hasNext || crossfading} className="btn-ghost disabled:opacity-30" title="Skip back">
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M6 6l8.5 6L6 18V6zM16 6v12h2V6h-2z"/>
-          </svg>
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6l8.5 6L6 18V6zM16 6v12h2V6h-2z"/></svg>
         </button>
         <button
           onClick={togglePlay}
           className="w-14 h-14 flex items-center justify-center bg-vibe-600 hover:bg-vibe-500 rounded-full transition-colors"
         >
           {isPlaying ? (
-            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
-            </svg>
+            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>
           ) : (
-            <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
+            <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
           )}
         </button>
         <button onClick={handleSkip} disabled={!hasNext || crossfading} className="btn-ghost disabled:opacity-30" title="Skip + crossfade">
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
-          </svg>
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
         </button>
       </div>
 

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import Player from './components/Player'
 import Queue from './components/Queue'
 import VibeControl from './components/VibeControl'
@@ -50,7 +51,9 @@ function EmptyState() {
 }
 
 export default function App() {
-  const { clearCache } = useStore()
+  const { clearCache, fetchLibrary } = useStore()
+
+  useEffect(() => { fetchLibrary() }, [])
 
   return (
     <div className="min-h-screen bg-gray-950">
